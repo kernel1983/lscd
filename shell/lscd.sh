@@ -3,9 +3,10 @@
 #   source /path/to/lscd.sh
 #   or copy the function below into your rc file
 
-lscd() {
+l() {
   local output
   if output=$(command lscd "$@") && [[ -n "$output" ]]; then
     cd "$output"
   fi
+  echo ""
 }

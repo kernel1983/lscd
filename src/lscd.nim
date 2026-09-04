@@ -69,6 +69,7 @@ proc readKey(): int =
 
 proc scanDir(dir: string) =
   entries = @[]
+  entries.add Entry(name: ".", kind: ekDir, isExec: false)
   for kind, path in walkDir(dir):
     let name = lastPathPart(path)
     var ek: EntryKind
@@ -85,6 +86,8 @@ proc scanDir(dir: string) =
     entries.add Entry(name: name, kind: ek, isExec: isExec)
 
   entries.sort(proc(a, b: Entry): int =
+    if a.name == "." : return -1
+    if b.name == "." : return 1
     if a.kind == ekDir and b.kind != ekDir: return -1
     if a.kind != ekDir and b.kind == ekDir: return 1
     cmpIgnoreCase(a.name, b.name)
@@ -198,7 +201,7 @@ proc render() =
     stderr.writeLine "  (no matches)"
 
   stderr.setForegroundColor(fgBlack, true)
-  stderr.write " Up/Down:move  Enter:cd  Backspace:up  Esc:quit  type:filter "
+  stderr.write " Up/Down:move  Enter:enter dir/choose  Backspace:up  Esc:quit  type:filter "
   stderr.resetAttributes()
   flushFile(stderr)
 
@@ -217,12 +220,23 @@ proc handleInput() =
     of 13, 10: # Enter
       if filtered.len > 0:
         let e = entries[filtered[cursor]]
-        let selected = currentDir / e.name
-        let absPath = expandFilename(selected)
-        cleanupForExit()
-        stdout.write absPath
-        flushFile(stdout)
-        quit(0)
+        if e.kind == ekDir and e.name != ".":
+          # Drill into a subdirectory instead of exiting, so one invocation
+          # can descend several levels.
+          currentDir = expandFilename(currentDir / e.name)
+          filter = ""
+          cursor = 0
+          top = 0
+          scanDir(currentDir)
+          applyFilter()
+        else:
+          # '.' commits the current directory; a file prints its own path.
+          let absPath = if e.name == ".": expandFilename(currentDir)
+                        else: expandFilename(currentDir / e.name)
+          cleanupForExit()
+          stdout.write absPath
+          flushFile(stdout)
+          quit(0)
     of 127, 8: # Backspace
       if filter.len > 0:
         filter = filter[0 .. ^2]
