@@ -5,8 +5,12 @@
 
 l() {
   local output
-  if output=$(command lscd "$@") && [[ -n "$output" ]]; then
-    cd "$output"
+  if output=$(command /PATH_TO/lscd "$@"); then
+    if [[ -d "$output" ]]; then
+      cd "$output"
+    elif [[ -f "$output" ]]; then
+      vim "$output"
+    fi
   fi
   echo ""
 }
