@@ -51,13 +51,24 @@ action you want.
 ```bash
 git clone <repo-url> lscd
 cd lscd
-nim c -d:release -d:strip -o:lscd src/lscd.nim
+nimble build
 ```
 
-Optionally install into your PATH:
+`nimble build` compiles with `-d:release` in `src/lscd.nim` and outputs the
+`lscd` binary in the current directory.
+
+Optionally copy the binary into your PATH:
 
 ```bash
-install -m755 lscd /usr/local/bin/lscd
+mkdir -p ~/.local/bin
+cp lscd ~/.local/bin/
+```
+
+Make sure `~/.local/bin` is in your `PATH` (add the line below to `~/.bashrc`,
+`~/.bash_profile`, or `~/.profile`):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Shell integration
@@ -66,9 +77,13 @@ The binary only prints the chosen path. To make it actually `cd`, source the
 provided wrapper function:
 
 ```bash
-# ~/.bashrc or ~/.zshrc
+# add to ~/.bashrc or ~/.bash_profile or ~/.profile
 source /path/to/lscd/shell/lscd.sh
 ```
+
+The wrapper forks on the returned path: directories are `cd`-ed into, and files
+run an action chosen by extension — e.g. `shell/lscd.sh` plays media files with
+`ffplay`. Copy the function into your rc file and adjust it to your needs.
 
 Then use `l` instead of `lscd`:
 
@@ -92,9 +107,9 @@ l() {
       cd "$output"
     else
       case "${output##*.}" in
+        mp4|m4a|mp3) ffplay "$output" ;;
         md|txt) ${EDITOR:-vi} "$output" ;;
-        png|jpg|gif) xdg-open "$output" ;;
-        py|sh|rs|nim) ${EDITOR:-vi} "$output" ;;
+        py|js|nim) ${EDITOR:-vi} "$output" ;;
         *) echo "$output" ;;
       esac
     fi

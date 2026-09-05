@@ -9,7 +9,14 @@ l() {
     if [[ -d "$output" ]]; then
       cd "$output"
     elif [[ -f "$output" ]]; then
-      vim "$output"
+      case "${output##*.}" in
+      mkv | avi | mp4 | m4a | mp3)
+        ffplay "$output" &>/dev/null &
+        ;;
+      *)
+        vim "$output"
+        ;;
+      esac
     fi
   fi
   echo ""
