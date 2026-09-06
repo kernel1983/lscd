@@ -187,7 +187,7 @@ proc render() =
       stderr.write "\x1b[0G" # ensure start at column 0
       stderr.write prefix
       case e.kind
-      of ekDir: stderr.setForegroundColor(fgBlue)
+      of ekDir: stderr.setForegroundColor(fgYellow)
       of ekFile:
         if e.isExec: stderr.setForegroundColor(fgGreen)
         else: stderr.setForegroundColor(fgWhite)
