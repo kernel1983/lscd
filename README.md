@@ -30,9 +30,10 @@ action you want.
 
 - **Zero dependencies** — no external libraries; only the Nim standard library.
 - **Inline, non-fullscreen** TUI that persists after exit, like `ls`.
-- **`ls`-style listing**: directories first (shown in blue), executables (green).
+- **Multi-column layout**: columns auto-adjust based on terminal width for efficient use of space.
+- **`ls`-style listing**: directories first (shown in yellow), files (green).
   A trailing `/` marks directories and `*` marks executables.
-- **Navigation**: Up/Down arrows, Home/End to jump to first/last entry.
+- **Navigation**: Up/Down/Left/Right arrows, Home/End to jump to first/last entry.
 - **Filter by typing**: letters/numbers/`._- ` filter the list by prefix (case-insensitive).
 - **Drill into subdirectories** with `Enter` (*one* invocation can descend
   multiple levels — no need to re-run `lscd`).
@@ -132,7 +133,8 @@ Omitting the directory starts from the current directory.
 
 | Key         | Action                                              |
 |-------------|-----------------------------------------------------|
-| `Up`/`Down` | Move cursor                                        |
+| `Up`/`Down` | Move cursor up/down (between rows)                |
+| `Left`/`Right` | Move cursor left/right (between columns)        |
 | `Home`/`End`| Jump to first / last entry                         |
 | `Enter`     | On a dir: drill in · on `.`: commit current · on file: pick it |
 | `Backspace` | Clear filter, or go to parent directory            |

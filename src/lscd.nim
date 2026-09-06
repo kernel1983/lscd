@@ -60,6 +60,8 @@ proc readKey(): int =
       case buf[1]
       of 'A': return 1000 # Up
       of 'B': return 1001 # Down
+      of 'C': return 1005 # Right
+      of 'D': return 1006 # Left
       of 'H': return 1002 # Home
       of 'F': return 1003 # End
       of 'Z': return 1004 # Shift-Tab
@@ -131,36 +133,54 @@ proc queryCursorRow(): int =
   except ValueError:
     result = 0
 
+var
+  nCols = 1
+  colWidth = 1
+  colPadding = 2
+
 proc adjustViewport(maxVisible: int) =
-  # Keep cursor inside the visible window [top, top+maxVisible).
+  # Keep cursor inside the visible window [top, top+maxVisible) in row-space.
   if maxVisible <= 0: top = 0; return
-  if cursor < top:
-    top = cursor
-  elif cursor >= top + maxVisible:
-    top = cursor - maxVisible + 1
+  let curRow = if nCols > 0: cursor div nCols else: 0
+  if curRow < top:
+    top = curRow
+  elif curRow >= top + maxVisible:
+    top = curRow - maxVisible + 1
 
 proc listMaxRows(): int =
   # We want to use as much of the screen as possible for entries. Reserve 1
   # row for the header and 1 row for the hint; the entry window uses the rest.
   result = max(1, termH - 2)
 
-proc render() =
-  # Determine the visible window size from total screen height.
-  let maxVisible = listMaxRows()
-  adjustViewport(maxVisible)
-  let visibleCount = min(filtered.len - top, maxVisible)
+proc calcLayout() =
+  # Calculate column width from the longest visible entry name.
+  var maxNameLen = 0
+  for idx in filtered:
+    let e = entries[idx]
+    var len = e.name.len
+    if e.kind == ekDir: len += 1
+    elif e.isExec: len += 1
+    if len > maxNameLen: maxNameLen = len
+  colWidth = maxNameLen + 2  # 2 chars padding between columns
+  nCols = max(1, termW div colWidth)
 
-  # The full block is header(1) + entries(visibleCount) + hint(1). If it would
-  # run past the bottom edge, shift the whole block upward so it fits exactly,
-  # still never scrolling the terminal (which would break the absolute anchor).
+proc visibleRows(): int =
+  ## How many rows the grid occupies.
+  max(1, (filtered.len + nCols - 1) div nCols)
+
+proc render() =
+  calcLayout()
+  let maxVisible = listMaxRows()
+  let totalRows = visibleRows()
+  adjustViewport(maxVisible)
+  let visibleCount = min(totalRows - top, maxVisible)
+
   let blockH = visibleCount + 2
   if listTopRow + blockH - 1 > termH:
     listTopRow = max(1, termH - blockH + 1)
 
-  # Position to the fixed list-top row (absolute coords unaffected by scrolling),
-  # then clear downward before redrawing.
   stderr.write "\x1b[" & $listTopRow & ";1H"
-  stderr.write "\x1b[0J" # clear from cursor to end of screen
+  stderr.write "\x1b[0J"
 
   let pathStr = " " & currentDir & " "
   let filterStr = if filter.len > 0: " /" & filter & " " else: ""
@@ -173,46 +193,57 @@ proc render() =
 
   if filtered.len > 0:
     for row in 0 ..< visibleCount:
-      let realRow = top + row
-      let idx = filtered[realRow]
-      let e = entries[idx]
-      let prefix = if realRow == cursor: ">" else: ""
-      let suffix = case e.kind
-        of ekDir: "/"
-        of ekFile:
-          if e.isExec: "*"
-          else: ""
+      let absRow = top + row
+      stderr.write "\x1b[" & $(listTopRow + 1 + row) & ";1H"
+      stderr.write "\x1b[0K"
+      for col in 0 ..< nCols:
+        let idx = absRow * nCols + col
+        if idx >= filtered.len: break
+        let realIdx = filtered[idx]
+        let e = entries[realIdx]
+        let isCursor = realIdx == cursor
+        let prefix = if isCursor: ">" else: " "
+        let suffix = case e.kind
+          of ekDir: "/"
+          of ekFile:
+            if e.isExec: "*"
+            else: ""
 
-      stderr.setForegroundColor(fgWhite)
-      stderr.write "\x1b[0G" # ensure start at column 0
-      stderr.write prefix
-      case e.kind
-      of ekDir: stderr.setForegroundColor(fgYellow)
-      of ekFile:
-        if e.isExec: stderr.setForegroundColor(fgGreen)
-        else: stderr.setForegroundColor(fgWhite)
-      stderr.write e.name
-      stderr.setForegroundColor(fgBlack, true)
-      stderr.write suffix
-      stderr.resetAttributes()
-      stderr.write "\n"
+        stderr.write "\x1b[" & $(col * colWidth + 1) & "G"
+        stderr.write prefix
+        case e.kind
+        of ekDir: stderr.setForegroundColor(fgYellow)
+        of ekFile: stderr.setForegroundColor(fgGreen)
+        stderr.write e.name
+        stderr.setForegroundColor(fgBlack, true)
+        stderr.write suffix
+        let pad = colWidth - (e.name.len + suffix.len + 1)
+        if pad > 0: stderr.write " ".repeat(pad)
+        stderr.resetAttributes()
   else:
     stderr.setForegroundColor(fgYellow)
     stderr.writeLine "  (no matches)"
 
+  stderr.write "\x1b[" & $(listTopRow + visibleCount + 1) & ";1H"
+  stderr.write "\x1b[0K"
   stderr.setForegroundColor(fgBlack, true)
-  stderr.write " Up/Down:move  Enter:enter dir/choose  Backspace:up  Esc:quit  type:filter "
+  stderr.write " Up/Down/Left/Right:move  Enter:enter/choose  Backspace:up  Esc:quit  type:filter "
   stderr.resetAttributes()
   flushFile(stderr)
 
 proc handleInput() =
   while true:
+    calcLayout()
     let key = readKey()
     case key
     of 1000: # Up
-      if cursor > 0: cursor.dec
+      if cursor >= nCols: cursor.dec nCols
     of 1001: # Down
-      if cursor < filtered.len - 1: cursor.inc
+      if cursor + nCols < filtered.len: cursor.inc nCols
+    of 1005: # Right
+      if cursor + 1 < filtered.len: cursor.inc
+    of 1006: # Left
+      if cursor > 0: cursor.dec
     of 1002: # Home
       cursor = 0
     of 1003: # End
@@ -269,7 +300,8 @@ proc main() =
     echo "Usage: lscd [directory]"
     echo ""
     echo "Keys:"
-    echo "  Up/Down       Move cursor"
+    echo "  Up/Down       Move cursor up/down"
+    echo "  Left/Right    Move cursor left/right"
     echo "  Home/End      Jump to first/last"
     echo "  Enter         Select and print path"
     echo "  Backspace     Clear filter or go to parent"
