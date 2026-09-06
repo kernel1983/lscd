@@ -4,6 +4,8 @@ An interactive `ls` + `cd` for your terminal. List a directory, navigate with th
 arrow keys, filter by typing, and `cd` into the directory you pick — without ever
 leaving the shell.
 
+<img width="682" height="213" alt="screenshot" src="https://github.com/user-attachments/assets/dc392778-8e43-4676-bbce-6a061902e12d" />
+
 No fullscreen UI (no alternate screen buffer). The list renders inline, exactly
 like `ls` output, and stays on screen after you exit.
 
