@@ -254,7 +254,8 @@ proc handleInput() =
         if e.kind == ekDir and e.name != ".":
           # Drill into a subdirectory instead of exiting, so one invocation
           # can descend several levels.
-          currentDir = expandFilename(currentDir / e.name)
+          currentDir = try: expandFilename(currentDir / e.name)
+                       except OSError: currentDir / e.name
           filter = ""
           cursor = 0
           top = 0
@@ -262,8 +263,10 @@ proc handleInput() =
           applyFilter()
         else:
           # '.' commits the current directory; a file prints its own path.
-          let absPath = if e.name == ".": expandFilename(currentDir)
-                        else: expandFilename(currentDir / e.name)
+          let rawPath = if e.name == ".": currentDir
+                        else: currentDir / e.name
+          let absPath = try: expandFilename(rawPath)
+                        except OSError: rawPath
           cleanupForExit()
           stdout.write absPath
           flushFile(stdout)
