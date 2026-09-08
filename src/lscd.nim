@@ -97,9 +97,17 @@ proc scanDir(dir: string) =
 
 proc applyFilter() =
   filtered = @[]
-  for i, e in entries:
-    if filter.len == 0 or toLowerAscii(e.name).startsWith(toLowerAscii(filter)):
-      filtered.add i
+  if filter.len > 0:
+    let lf = toLowerAscii(filter)
+    var prefixHits, containsHits: seq[int]
+    for i, e in entries:
+      let ln = toLowerAscii(e.name)
+      if ln.contains(lf):
+        if ln.startsWith(lf): prefixHits.add i
+        else: containsHits.add i
+    filtered = prefixHits & containsHits
+  else:
+    for i in 0 ..< entries.len: filtered.add i
   if cursor >= filtered.len:
     cursor = max(0, filtered.len - 1)
   top = 0
@@ -201,7 +209,7 @@ proc render() =
         if idx >= filtered.len: break
         let realIdx = filtered[idx]
         let e = entries[realIdx]
-        let isCursor = realIdx == cursor
+        let isCursor = idx == cursor
         let prefix = if isCursor: ">" else: " "
         let suffix = case e.kind
           of ekDir: "/"
