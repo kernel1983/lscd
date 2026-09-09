@@ -1,5 +1,9 @@
-import std/[os, strutils, algorithm, posix, termios, terminal, exitprocs]
-import std/times as dtimes
+import std/[os, strutils, algorithm, terminal, exitprocs]
+when not defined(windows):
+  import std/[posix, termios]
+  import std/times as dtimes
+else:
+  import std/winlean
 
 type
   EntryKind = enum
@@ -17,23 +21,58 @@ var
   filter: string
   currentDir: string
   termW, termH: int
-  origTermios: Termios
 
-proc setupRawMode() =
-  let fd = getFileHandle(stdin)
-  discard tcGetAttr(fd, addr origTermios)
-  var raw = origTermios
-  raw.c_iflag = raw.c_iflag and not Cflag(BRKINT or ICRNL or INPCK or ISTRIP or IXON)
-  # keep OPOST/ONLCR enabled so \n advances to a fresh column (no stray indentation)
-  raw.c_cflag = (raw.c_cflag and not Cflag(CSIZE or PARENB)) or CS8
-  raw.c_lflag = raw.c_lflag and not Cflag(ECHO or ICANON or IEXTEN or ISIG)
-  raw.c_cc[VMIN] = 1.cchar
-  raw.c_cc[VTIME] = 0.cchar
-  discard tcSetAttr(fd, TCSAFLUSH, addr raw)
+when not defined(windows):
+  var origTermios: Termios
 
-proc restoreTerminal() =
-  let fd = getFileHandle(stdin)
-  discard tcSetAttr(fd, TCSAFLUSH, addr origTermios)
+  proc setupRawMode() =
+    let fd = cint(getFileHandle(stdin))
+    discard tcGetAttr(fd, addr origTermios)
+    var raw = origTermios
+    raw.c_iflag = raw.c_iflag and not Cflag(BRKINT or ICRNL or INPCK or ISTRIP or IXON)
+    # keep OPOST/ONLCR enabled so \n advances to a fresh column (no stray indentation)
+    raw.c_cflag = (raw.c_cflag and not Cflag(CSIZE or PARENB)) or CS8
+    raw.c_lflag = raw.c_lflag and not Cflag(ECHO or ICANON or IEXTEN or ISIG)
+    raw.c_cc[VMIN] = 1.cchar
+    raw.c_cc[VTIME] = 0.cchar
+    discard tcSetAttr(fd, TCSAFLUSH, addr raw)
+
+  proc restoreTerminal() =
+    let fd = cint(getFileHandle(stdin))
+    discard tcSetAttr(fd, TCSAFLUSH, addr origTermios)
+
+  proc isTTY(): bool =
+    let fd = cint(getFileHandle(stdin))
+    var t: Termios
+    tcGetAttr(fd, addr t) == 0
+else:
+  var origMode: DWORD
+  var stdinInHandle: HANDLE
+
+  proc setupRawMode() =
+    stdinInHandle = getStdHandle(STD_INPUT_HANDLE)
+    if stdinInHandle != INVALID_HANDLE_VALUE and getConsoleMode(stdinInHandle, addr origMode) != 0:
+      var mode = origMode
+      # Disable ENABLE_ECHO_INPUT / ENABLE_LINE_INPUT / ENABLE_PROCESSED_INPUT so we
+      # get raw per-byte input; keep virtual-terminal input so arrow keys arrive
+      # as ESC sequences (matches the POSIX arrow-key parser in readKey()).
+      mode = (mode and not (ENABLE_ECHO_INPUT or ENABLE_LINE_INPUT or ENABLE_PROCESSED_INPUT)) or ENABLE_VIRTUAL_TERMINAL_INPUT
+      discard setConsoleMode(stdinInHandle, mode)
+      # Enable virtual-terminal processing on stderr so the raw ANSI escape
+      # sequences used by render() are interpreted by the Windows console.
+      var outMode: DWORD
+      let outH = getStdHandle(STD_ERROR_HANDLE)
+      if outH != INVALID_HANDLE_VALUE and getConsoleMode(outH, addr outMode) != 0:
+        discard setConsoleMode(outH, outMode or ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+
+  proc restoreTerminal() =
+    if stdinInHandle != INVALID_HANDLE_VALUE:
+      discard setConsoleMode(stdinInHandle, origMode)
+
+  proc isTTY(): bool =
+    let h = getStdHandle(STD_INPUT_HANDLE)
+    var m: DWORD
+    h != INVALID_HANDLE_VALUE and getConsoleMode(h, addr m) != 0
 
 var cleaned = false
 
@@ -114,32 +153,54 @@ proc applyFilter() =
 
 var listTopRow = 1
 
-proc queryCursorRow(): int =
-  # Ask the terminal for the cursor's absolute row: ESC[6n -> ESC[r;cR
-  # Use the raw fd (not File's buffered stdin) with non-blocking reads + timeout.
-  let fd = getFileHandle(stdin)
-  let oldFlags = fcntl(fd, F_GETFL, 0)
-  discard fcntl(fd, F_SETFL, oldFlags or O_NONBLOCK)
-  stderr.write "\x1b[6n"
-  flushFile(stderr)
-  var buf = ""
-  var ch: char
-  let deadline = epochTime() + 0.2
-  while epochTime() < deadline:
-    let n = posix.read(fd, addr ch, 1)
-    if n == 1:
-      buf.add ch
-      if ch == 'R': break
-      if buf.len > 32: break
+when not defined(windows):
+  proc queryCursorRow(): int =
+    # Ask the terminal for the cursor's absolute row: ESC[6n -> ESC[r;cR
+    # Use the raw fd (not File's buffered stdin) with non-blocking reads + timeout.
+    let fd = cint(getFileHandle(stdin))
+    let oldFlags = fcntl(fd, F_GETFL, 0)
+    discard fcntl(fd, F_SETFL, oldFlags or O_NONBLOCK)
+    stderr.write "\x1b[6n"
+    flushFile(stderr)
+    var buf = ""
+    var ch: char
+    let deadline = epochTime() + 0.2
+    while epochTime() < deadline:
+      let n = posix.read(fd, addr ch, 1)
+      if n == 1:
+        buf.add ch
+        if ch == 'R': break
+        if buf.len > 32: break
+      else:
+        sleep(2)
+    discard fcntl(fd, F_SETFL, oldFlags)
+    let semi = buf.find(';')
+    if semi < 0: return 0
+    try:
+      result = parseInt(buf[2 ..< semi])
+    except ValueError:
+      result = 0
+else:
+  type
+    WinSmallRect = object
+      wleft, wtop, wright, wbottom: int16
+    ConsoleScreenBufferInfo = object
+      dwSize: COORD
+      dwCursorPosition: COORD
+      wAttributes: int16
+      srWindow: WinSmallRect
+      dwMaximumWindowSize: COORD
+
+  proc getConsoleScreenBufferInfo(h: Handle, info: ptr ConsoleScreenBufferInfo): int32 {.
+      stdcall, dynlib: "kernel32", importc: "GetConsoleScreenBufferInfo".}
+
+  proc queryCursorRow(): int =
+    # Windows: read the cursor position directly from the console screen buffer.
+    var csbi: ConsoleScreenBufferInfo
+    if getConsoleScreenBufferInfo(getStdHandle(STD_ERROR_HANDLE), addr csbi) != 0:
+      result = int(csbi.dwCursorPosition.y) + 1
     else:
-      sleep(2)
-  discard fcntl(fd, F_SETFL, oldFlags)
-  let semi = buf.find(';')
-  if semi < 0: return 0
-  try:
-    result = parseInt(buf[2 ..< semi])
-  except ValueError:
-    result = 0
+      result = 0
 
 var
   nCols = 1
@@ -330,6 +391,10 @@ proc main() =
 
   if not dirExists(currentDir):
     stderr.writeLine "Error: " & currentDir & " is not a directory"
+    quit(1)
+
+  if not isTTY():
+    stderr.writeLine "Error: lscd requires an interactive terminal"
     quit(1)
 
   hideCursor(stderr)
